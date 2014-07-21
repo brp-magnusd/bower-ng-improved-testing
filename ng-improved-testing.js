@@ -131,6 +131,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
      */
     function ModuleBuilder(moduleName) {
 
+        /**
+         * @param {string} type
+         * @param {string} componentName
+         * @param {string} componentKind
+         * @param {string} [dependenciesUsage]
+         * @param {Array.<string>} [dependencies]
+         */
         function includeComponent(type, componentName, componentKind, dependenciesUsage, dependencies) {
             var toBeIncludedModuleComponent = {
                 type: type,
@@ -169,8 +176,8 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          * @property {string} type
          * @property {string} componentName
          * @property {string} componentKind
-         * @property {string} [dependenciesUsage]
-         * @property {Array.<string>} [dependencies]
+         * @property {(undefined|string)} dependenciesUsage
+         * @property {(undefined|Array.<string>)} dependencies
          */
 
         /** @type {Object.<ModuleBuilder.ToBeIncludedModuleComponent>} */
@@ -352,6 +359,11 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                 var dependencyInfoPerName = getModuleComponentDependencies(type, name);
                 var declaredModuleComponent = getDeclaredModuleComponent(type, name);
 
+                if (declaredModuleComponent.providerName === '$provide' &&
+                        declaredModuleComponent.providerMethod === 'provider') {
+                    throw 'Services declared with "provider" are currently not supported';
+                }
+
                 var originalDeclaration = declaredModuleComponent.declaration;
                 var dependencies = injector.annotate(originalDeclaration);
 
@@ -367,7 +379,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                         var canBeMocked = mockCreator.canBeMocked(dependencyInfo.instance);
 
                         if (shouldBeMocked && !canBeMocked &&
-                            toBeIncludedModuleComponent.dependenciesUsage === 'for') {
+                                toBeIncludedModuleComponent.dependenciesUsage === 'for') {
                             throw 'Could not mock the dependency explicitly asked to mock: ' + dependencyName;
                         }
 
@@ -422,13 +434,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             var asIsServices = {};
 
             /**
-             * @type {Object.<{$provideMethod: string, declaration: (Function|Array.<(string|Function)>)}>}
+             * @type {Object.<{providerName: string, providerMethod: string, declaration: Array.<(string|Function)>}>}
              */
             var declarations = {};
 
             var buildModule = angular.module(buildModuleName, originalModule.requires);
 
-            angular.forEach(toBeIncludedModuleComponents, function (toBeIncludedModuleComponent) {
+            angular.forEach(toBeIncludedModuleComponents, function(toBeIncludedModuleComponent) {
                 if (toBeIncludedModuleComponent.componentKind === 'asIs') {
                     handleAsIsComponentKind(toBeIncludedModuleComponent);
                 } else if (toBeIncludedModuleComponent.componentKind === 'withMocks') {
