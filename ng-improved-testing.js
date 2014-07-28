@@ -289,6 +289,83 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             return this;
         };
 
+        //TODO: comment
+        this.directiveWithMocks = function(directiveName) {
+            includeComponent('directive', directiveName, 'withMocks');
+            return this;
+        };
+
+        /**
+         * Includes a directive that uses mocked service dependencies (instead of actual services) in the module.
+         *
+         * @param {string} directiveName name of the controller to be included in the to be build module
+         * @param {...string} toBeMockedDependencies dependencies to be replaced with a mock implementation
+         * @returns {moduleIntrospectorFactory.ModuleBuilder}
+         */
+        this.directiveWithMocksFor = function(directiveName, toBeMockedDependencies) {
+            toBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
+            includeComponent('directive', directiveName, 'withMocks', 'for', toBeMockedDependencies);
+            return this;
+        };
+
+        //TODO: comment
+        this.directiveWithMocksExcept = function(directiveName, toBeMockedDependencies) {
+            includeComponent('directive', directiveName, 'withMocks', 'except', toBeMockedDependencies);
+            return this;
+        };
+
+        /**
+         * Including an actual directive (and not a mocked one) in the module
+         *
+         * @param {string} directiveName name of the directive to be included in the to be build module
+         * @returns {moduleIntrospectorFactory.ModuleBuilder}
+         */
+        this.directiveAsIs = function(directiveName) {
+            includeComponent('directive', directiveName, 'asIs');
+            return this;
+        };
+
+        if (angular.version.major > 2 || (angular.version.major === 1 && angular.version.minor >= 2)) {
+
+            //TODO: comment
+            this.animationWithMocks = function(animationName) {
+                includeComponent('animation', animationName, 'withMocks');
+                return this;
+            };
+
+            /**
+             * Includes a animation that uses mocked service dependencies (instead of actual services) in the module.
+             *
+             * @param {string} animationName name of the controller to be included in the to be build module
+             * @param {...string} toBeMockedDependencies dependencies to be replaced with a mock implementation
+             * @returns {moduleIntrospectorFactory.ModuleBuilder}
+             */
+            this.animationWithMocksFor = function(animationName, toBeMockedDependencies) {
+                toBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
+                includeComponent('animation', animationName, 'withMocks', 'for', toBeMockedDependencies);
+                return this;
+            };
+
+            //TODO: comment
+            this.animationWithMocksExcept = function(animationName, toBeMockedDependencies) {
+                includeComponent('animation', animationName, 'withMocks', 'except', toBeMockedDependencies);
+                return this;
+            };
+
+            /**
+             * Including an actual animation (and not a mocked one) in the module
+             *
+             * @param {string} animationName name of the animation to be included in the to be build module
+             * @returns {moduleIntrospectorFactory.ModuleBuilder}
+             */
+            this.animationAsIs = function(animationName) {
+                includeComponent('animation', animationName, 'asIs');
+                return this;
+            };
+
+        }
+
+
         /**
          * Builds ...
          * @returns {Function}
@@ -304,6 +381,10 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                     result = introspector.getControllerDependencies(injector, name);
                 } else if (type === 'filter') {
                     result = introspector.getFilterDependencies(injector, name);
+                } else if (type === 'directive') {
+                    result = introspector.getDirectiveDependencies(injector, name);
+                } else if (type === 'animation') {
+                    result = introspector.getAnimationDependencies(injector, name);
                 } else {
                     throw 'Unsupported module component type: ' + type;
                 }
@@ -320,6 +401,10 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                     result = introspector.getControllerDeclaration(name);
                 } else if (type === 'filter') {
                     result = introspector.getFilterDeclaration(name);
+                } else if (type === 'directive') {
+                    result = introspector.getDirectiveDeclaration(name);
+                } else if (type === 'animation') {
+                    result = introspector.getAnimationDeclaration(name);
                 } else {
                     throw 'Unsupported module component type: ' + type;
                 }
@@ -331,7 +416,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                 var type = toBeIncludedModuleComponent.type;
                 var name = toBeIncludedModuleComponent.componentName;
 
-                if (type === 'controller' || type === 'filter') {
+                if (type === 'controller' || type === 'filter' || type === 'directive') {
                     var dependencies = getModuleComponentDependencies(type, name);
 
                     angular.forEach(dependencies, function(dependencyInfo, dependencyName) {
@@ -450,11 +535,14 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 
             numberOfBuildModules += 1;
 
-            return angular.mock.module(function($provide, $filterProvider, $controllerProvider) {
+            return angular.mock.module(function(
+                    $provide, $filterProvider, $controllerProvider, $compileProvider, $animateProvider) {
                 var providers = {
                     $provide: $provide,
                     $filterProvider: $filterProvider,
-                    $controllerProvider: $controllerProvider
+                    $controllerProvider: $controllerProvider,
+                    $compileProvider: $compileProvider,
+                    $animateProvider: $animateProvider
                 };
 
                 angular.forEach(mockedServices, function(originalService, serviceName) {
