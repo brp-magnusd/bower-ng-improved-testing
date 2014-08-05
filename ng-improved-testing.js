@@ -40,8 +40,11 @@ function MockCreator() {
             return false;
         }
 
-        for (var propertyName in value) {
-            if (value.hasOwnProperty(propertyName) && angular.isFunction(value[propertyName])) {
+        for (var propertyName in value) { // jshint ignore:line
+            var propertyValue = value[propertyName];
+
+            if (angular.isFunction(propertyValue) && propertyName !== 'constructor' &&
+                    propertyValue !== Object.prototype[propertyName]) {
                 return true;
             }
         }
@@ -60,10 +63,10 @@ function MockCreator() {
 
         var Constructor = jasmine.createSpy();
 
-        copyPropertiesAndReplaceWithSpies(value, Constructor);
+        copyPropertiesAndReplaceWithSpies(value, Constructor, true);
 
         Constructor.prototype = Object.create(value.prototype);
-        copyPropertiesAndReplaceWithSpies(value.prototype, Constructor.prototype, 'constructor');
+        copyPropertiesAndReplaceWithSpies(value.prototype, Constructor.prototype, true, 'constructor');
         Constructor.prototype.constructor = value.prototype.constructor;
 
         return Constructor;
@@ -87,7 +90,7 @@ function MockCreator() {
     function createObjectMock(obj) {
         var result = {};
 
-        copyPropertiesAndReplaceWithSpies(obj, result);
+        copyPropertiesAndReplaceWithSpies(obj, result, false, 'constructor');
 
         return result;
     }
@@ -95,17 +98,23 @@ function MockCreator() {
     /**
      * @param {Object} source
      * @param {Object} target
+     * @param {boolean} onlyOwnProperties
      * @param {...string} ignoreProperties
      */
-    function copyPropertiesAndReplaceWithSpies(source, target, ignoreProperties) {
-        ignoreProperties = Array.prototype.slice.call(arguments, 2);
+    function copyPropertiesAndReplaceWithSpies(source, target, onlyOwnProperties, ignoreProperties) {
+        ignoreProperties = Array.prototype.slice.call(arguments, 3);
 
-        for (var propertyName in source) {
-            if (source.hasOwnProperty(propertyName) &&
+        for (var propertyName in source) { // jshint ignore:line
+            if (onlyOwnProperties && !source.hasOwnProperty(propertyName)) {
+                continue;
+            }
+
+            var propertyValue = source[propertyName];
+
+            if ((onlyOwnProperties || (!onlyOwnProperties && propertyValue !== Object.prototype[propertyName])) &&
                     (!ignoreProperties || ignoreProperties.indexOf(propertyName) === -1)) {
-                var propertyValue = source[propertyName];
                 if (angular.isFunction(propertyValue)) {
-                    target[propertyName] = jasmine.createSpy();
+                    target[propertyName] = jasmine.createSpy(propertyName);
                 } else {
                     target[propertyName] = propertyValue;
                 }
@@ -120,6 +129,9 @@ angular.module('ngImprovedTesting')
 }());
 ;(function() {
 'use strict';
+
+/** @const */
+var angular1_0 = angular.version.full.indexOf('1.0.') === 0;
 
 var numberOfBuildModules = 0;
 
@@ -212,6 +224,17 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             ensureNotAConstantOrValueService(serviceName);
             notToBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
             includeComponent('service', serviceName, 'withMocks', 'except', notToBeMockedDependencies);
+            return this;
+        };
+
+        /**
+         * Including an actual service (and not a mocked one) in the module
+         *
+         * @param {string} serviceName name of the service to be included in the to be build module
+         * @returns {moduleIntrospectorFactory.ModuleBuilder}
+         */
+        this.serviceAsIs = function(serviceName) {
+            includeComponent('service', serviceName, 'asIs');
             return this;
         };
 
@@ -416,7 +439,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                 var type = toBeIncludedModuleComponent.type;
                 var name = toBeIncludedModuleComponent.componentName;
 
-                if (type === 'controller' || type === 'filter' || type === 'directive') {
+                if (type === 'controller' || type === 'filter' || type === 'directive' || type === 'animation') {
                     var dependencies = getModuleComponentDependencies(type, name);
 
                     angular.forEach(dependencies, function(dependencyInfo, dependencyName) {
@@ -443,11 +466,6 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 
                 var dependencyInfoPerName = getModuleComponentDependencies(type, name);
                 var declaredModuleComponent = getDeclaredModuleComponent(type, name);
-
-                if (declaredModuleComponent.providerName === '$provide' &&
-                        declaredModuleComponent.providerMethod === 'provider') {
-                    throw 'Services declared with "provider" are currently not supported';
-                }
 
                 var originalDeclaration = declaredModuleComponent.declaration;
                 var dependencies = injector.annotate(originalDeclaration);
@@ -489,6 +507,11 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 
                 annotatedDeclaration.push(originalNonAnnotatedServiceDeclaration);
 
+                if (declaredModuleComponent.providerName === '$provide' &&
+                        declaredModuleComponent.providerMethod === 'provider') {
+                    annotatedDeclaration = {$get: annotatedDeclaration};
+                }
+
                 declarations[name] = {
                     providerName: declaredModuleComponent.providerName,
                     providerMethod: declaredModuleComponent.providerMethod,
@@ -509,6 +532,35 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                     throw 'Invalid dependencies usage: ' + dependenciesUsage;
                 }
             }
+
+            function configureProviders(callback) {
+                if (angular1_0) {
+                    return function ($provide, $filterProvider, $controllerProvider, $compileProvider) {
+                        var providers = {
+                            $provide: $provide,
+                            $filterProvider: $filterProvider,
+                            $controllerProvider: $controllerProvider,
+                            $compileProvider: $compileProvider
+                        };
+
+                        callback(providers);
+                    };
+                } else {
+                    return function ($provide, $filterProvider, $controllerProvider, $compileProvider,
+                            $animateProvider) {
+                        var providers = {
+                            $provide: $provide,
+                            $filterProvider: $filterProvider,
+                            $controllerProvider: $controllerProvider,
+                            $compileProvider: $compileProvider,
+                            $animateProvider: $animateProvider
+                        };
+
+                        callback(providers);
+                    };
+                }
+            }
+
 
             var buildModuleName = 'generatedByNgImprovedTesting#' + numberOfBuildModules;
 
@@ -535,30 +587,21 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 
             numberOfBuildModules += 1;
 
-            return angular.mock.module(function(
-                    $provide, $filterProvider, $controllerProvider, $compileProvider, $animateProvider) {
-                var providers = {
-                    $provide: $provide,
-                    $filterProvider: $filterProvider,
-                    $controllerProvider: $controllerProvider,
-                    $compileProvider: $compileProvider,
-                    $animateProvider: $animateProvider
-                };
-
+            return angular.mock.module(configureProviders(function(providers) {
                 angular.forEach(mockedServices, function(originalService, serviceName) {
                     var mockedService = mockCreator.createMock(originalService);
-                    $provide.value(serviceName + 'Mock', mockedService);
+                    providers.$provide.value(serviceName + 'Mock', mockedService);
                 });
 
                 angular.forEach(asIsServices, function(originalService, serviceName) {
-                    $provide.value(serviceName, originalService);
+                    providers.$provide.value(serviceName, originalService);
                 });
 
                 angular.forEach(declarations, function(declarationInfo, declarationName) {
                     providers[declarationInfo.providerName][declarationInfo.providerMethod](
-                            declarationName, declarationInfo.declaration);
+                        declarationName, declarationInfo.declaration);
                 });
-            }, buildModule.name);
+            }), buildModule.name);
         };
 
     }
