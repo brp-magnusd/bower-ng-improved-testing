@@ -1,11 +1,94 @@
-(function() {
-'use strict';
+/**
+ * @license ngImprovedTesting
+ * (c) 2014 Emil van Galen. https://github.com/evangalen/ng-improved-testing
+ * License: MIT
+ */
+(function() { 'use strict';
 
-angular.module('ngImprovedTesting', ['ngModuleIntrospector']);
-}());
+angular.module('ngImprovedTesting', ['ngModuleIntrospector.$q']);
 
-(function() {
-'use strict';
+var ngModuleIntrospectorInjector = angular.injector(['ng', 'ngModuleIntrospector']);
+var moduleIntrospectorFactory = ngModuleIntrospectorInjector.get('moduleIntrospector');
+var moduleIntrospector = moduleIntrospectorFactory('ng');
+
+var original$QProviderConstructor = moduleIntrospector.getProviderDeclaration('$qProvider').rawDeclaration;
+var ngInjector = angular.injector(['ng']);
+var original$QProviderInstance = ngInjector.instantiate(original$QProviderConstructor, {});
+
+
+angular.module('ngImprovedTesting.$q', ['ngImprovedTesting.internal.config'])
+
+    /**
+     * @ngdoc service
+     * @name $q
+     * @module ngImprovedTesting
+     * @description
+     * TODO: add description
+     */
+    .provider('$q', ["ngImprovedTestingConfig", function(ngImprovedTestingConfig) {
+        this.$get = ["$rootScope", "$exceptionHandler", function($rootScope, $exceptionHandler) {
+            /** @type {?Array.<function()>} */
+            var executeOnNextTick = null;
+
+            if (ngImprovedTestingConfig.$qTick) {
+                executeOnNextTick = [];
+
+                $rootScope = {
+                    $evalAsync: function (callback) {
+                        executeOnNextTick.push(callback);
+                    }
+                };
+            }
+
+            var result = original$QProviderInstance.$get[original$QProviderInstance.$get.length - 1](
+                    $rootScope, $exceptionHandler);
+
+            if (ngImprovedTestingConfig.$qTick) {
+                /**
+                 * @ngdoc method
+                 * @name $q#tick
+                 * @description
+                 * TODO: add description
+                 */
+                result.tick = function () {
+                    angular.forEach(executeOnNextTick, function (callback) {
+                        callback();
+                    });
+                    executeOnNextTick.length = 0;
+                };
+            }
+
+            return result;
+        }];
+    }]);
+
+var ngImprovedTestingConfigDefaults = {
+    $qTick: false
+};
+
+var ngImprovedTestingConfig = angular.extend({}, ngImprovedTestingConfigDefaults);
+
+
+angular.module('ngImprovedTesting.internal.config', [])
+    .constant('ngImprovedTestingConfig', ngImprovedTestingConfig)
+
+    .run(function() {
+        angular.extend(ngImprovedTestingConfig, ngImprovedTestingConfigDefaults);
+    });
+
+var injector = angular.injector([
+        'ng',
+        'ngImprovedTesting.internal.config',
+        'ngImprovedTesting.internal.mockCreator',
+        'ngImprovedTesting.internal.moduleBuilder'
+    ]);
+
+window.ngImprovedTestingConfig = injector.get('ngImprovedTestingConfig');
+
+var mockCreator = injector.get('mockCreator');
+window.mockInstance = mockCreator.mockInstance;
+
+window.ModuleBuilder = injector.get('moduleBuilder');
 
 /**
  * @ngdoc service
@@ -17,7 +100,7 @@ function MockCreator() {
      * @param {*} value
      * @returns {boolean}
      */
-    this.canBeMocked = function (value) {
+    this.canInstanceBeMocked = function (value) {
         return angular.isFunction(value) || isObjectWithMethods(value);
     };
 
@@ -25,7 +108,7 @@ function MockCreator() {
      * @param {(Function|Object)} value
      * @returns {(Function|Object)}
      */
-    this.createMock = function (value) {
+    this.mockInstance = function (value) {
         if (angular.isFunction(value)) {
             return createFunctionMock(value);
         } else if (isObjectWithMethods(value)) {
@@ -123,15 +206,8 @@ function MockCreator() {
     }
 }
 
-angular.module('ngImprovedTesting')
+angular.module('ngImprovedTesting.internal.mockCreator', [])
     .service('mockCreator', MockCreator);
-
-}());
-;(function() {
-'use strict';
-
-/** @const */
-var angular1_0 = angular.version.full.indexOf('1.0.') === 0;
 
 var numberOfBuildModules = 0;
 
@@ -144,15 +220,15 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
     function ModuleBuilder(moduleName) {
 
         /**
-         * @param {string} type
+         * @param {string} providerName
          * @param {string} componentName
          * @param {string} componentKind
          * @param {string} [dependenciesUsage]
          * @param {Array.<string>} [dependencies]
          */
-        function includeComponent(type, componentName, componentKind, dependenciesUsage, dependencies) {
+        function includeProviderComponent(providerName, componentName, componentKind, dependenciesUsage, dependencies) {
             var toBeIncludedModuleComponent = {
-                type: type,
+                providerName: providerName,
                 componentName: componentName,
                 componentKind: componentKind
             };
@@ -166,7 +242,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
         }
 
         function ensureNotAConstantOrValueService(serviceName) {
-            var providerMethod = introspector.getServiceDeclaration(serviceName).providerMethod;
+            var providerMethod = introspector.getProviderComponentDeclaration('$provide', serviceName).providerMethod;
 
             if (providerMethod === 'constant' || providerMethod === 'value') {
                 throw 'Services declared with "contact" or "value" are not supported';
@@ -177,8 +253,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
         /** @type {angular.Module} */
         var originalModule = angular.module(moduleName);
 
-        /** @type {$injector} */
-        var injector = angular.injector(['ng', 'ngMock', moduleName]);
+        var injector = /** @type {$injector} */ angular.injector(['ng', 'ngMock', moduleName]);
 
         var introspector = moduleIntrospector(moduleName);
 
@@ -198,7 +273,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
         //TODO: comment
         this.serviceWithMocks = function(serviceName) {
             ensureNotAConstantOrValueService(serviceName);
-            includeComponent('service', serviceName, 'withMocks');
+            includeProviderComponent('$provide', serviceName, 'withMocks');
             return this;
         };
 
@@ -215,7 +290,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
         this.serviceWithMocksFor = function(serviceName, toBeMockedDependencies) {
             ensureNotAConstantOrValueService(serviceName);
             toBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
-            includeComponent('service', serviceName, 'withMocks', 'for', toBeMockedDependencies);
+            includeProviderComponent('$provide', serviceName, 'withMocks', 'for', toBeMockedDependencies);
             return this;
         };
 
@@ -223,7 +298,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
         this.serviceWithMocksExcept = function(serviceName, notToBeMockedDependencies) {
             ensureNotAConstantOrValueService(serviceName);
             notToBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
-            includeComponent('service', serviceName, 'withMocks', 'except', notToBeMockedDependencies);
+            includeProviderComponent('$provide', serviceName, 'withMocks', 'except', notToBeMockedDependencies);
             return this;
         };
 
@@ -234,13 +309,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          * @returns {moduleIntrospectorFactory.ModuleBuilder}
          */
         this.serviceAsIs = function(serviceName) {
-            includeComponent('service', serviceName, 'asIs');
+            includeProviderComponent('$provide', serviceName, 'asIs');
             return this;
         };
 
         //TODO: comment
         this.filterWithMocks = function(filterName) {
-            includeComponent('filter', filterName, 'withMocks');
+            includeProviderComponent('$filterProvider', filterName, 'withMocks');
             return this;
         };
 
@@ -255,13 +330,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          * @returns {moduleIntrospectorFactory.ModuleBuilder} the module builder instance
          */
         this.filterWithMocksFor = function(filterName, toBeMockedDependencies) {
-            includeComponent('filter', filterName, 'withMocks', 'for', toBeMockedDependencies);
+            includeProviderComponent('$filterProvider', filterName, 'withMocks', 'for', toBeMockedDependencies);
             return this;
         };
 
         //TODO: comment
         this.filterWithMocksExcept = function(filterName, notToBeMockedDependencies) {
-            includeComponent('filter', filterName, 'withMocks', 'except', notToBeMockedDependencies);
+            includeProviderComponent('$filterProvider', filterName, 'withMocks', 'except', notToBeMockedDependencies);
             return this;
         };
 
@@ -272,13 +347,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          * @returns {moduleIntrospectorFactory.ModuleBuilder}
          */
         this.filterAsIs = function(filterName) {
-            includeComponent('filter', filterName, 'asIs');
+            includeProviderComponent('$filterProvider', filterName, 'asIs');
             return this;
         };
 
         //TODO: comment
         this.controllerWithMocks = function(controllerName) {
-            includeComponent('controller', controllerName, 'withMocks');
+            includeProviderComponent('$controllerProvider', controllerName, 'withMocks');
             return this;
         };
 
@@ -291,13 +366,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          */
         this.controllerWithMocksFor = function(controllerName, toBeMockedDependencies) {
             toBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
-            includeComponent('controller', controllerName, 'withMocks', 'for', toBeMockedDependencies);
+            includeProviderComponent('$controllerProvider', controllerName, 'withMocks', 'for', toBeMockedDependencies);
             return this;
         };
 
         //TODO: comment
         this.controllerWithMocksExcept = function(controllerName, toBeMockedDependencies) {
-            includeComponent('controller', controllerName, 'withMocks', 'except', toBeMockedDependencies);
+            includeProviderComponent('$controllerProvider', controllerName, 'withMocks', 'except', toBeMockedDependencies);
             return this;
         };
 
@@ -308,13 +383,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          * @returns {moduleIntrospectorFactory.ModuleBuilder}
          */
         this.controllerAsIs = function(controllerName) {
-            includeComponent('controller', controllerName, 'asIs');
+            includeProviderComponent('$controllerProvider', controllerName, 'asIs');
             return this;
         };
 
         //TODO: comment
         this.directiveWithMocks = function(directiveName) {
-            includeComponent('directive', directiveName, 'withMocks');
+            includeProviderComponent('$compileProvider', directiveName, 'withMocks');
             return this;
         };
 
@@ -327,13 +402,13 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          */
         this.directiveWithMocksFor = function(directiveName, toBeMockedDependencies) {
             toBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
-            includeComponent('directive', directiveName, 'withMocks', 'for', toBeMockedDependencies);
+            includeProviderComponent('$compileProvider', directiveName, 'withMocks', 'for', toBeMockedDependencies);
             return this;
         };
 
         //TODO: comment
         this.directiveWithMocksExcept = function(directiveName, toBeMockedDependencies) {
-            includeComponent('directive', directiveName, 'withMocks', 'except', toBeMockedDependencies);
+            includeProviderComponent('$compileProvider', directiveName, 'withMocks', 'except', toBeMockedDependencies);
             return this;
         };
 
@@ -344,49 +419,45 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          * @returns {moduleIntrospectorFactory.ModuleBuilder}
          */
         this.directiveAsIs = function(directiveName) {
-            includeComponent('directive', directiveName, 'asIs');
+            includeProviderComponent('$compileProvider', directiveName, 'asIs');
             return this;
         };
 
-        if (angular.version.major > 2 || (angular.version.major === 1 && angular.version.minor >= 2)) {
+        //TODO: comment
+        this.animationWithMocks = function(animationName) {
+            includeProviderComponent('$animateProvider', animationName, 'withMocks');
+            return this;
+        };
 
-            //TODO: comment
-            this.animationWithMocks = function(animationName) {
-                includeComponent('animation', animationName, 'withMocks');
-                return this;
-            };
+        /**
+         * Includes a animation that uses mocked service dependencies (instead of actual services) in the module.
+         *
+         * @param {string} animationName name of the controller to be included in the to be build module
+         * @param {...string} toBeMockedDependencies dependencies to be replaced with a mock implementation
+         * @returns {moduleIntrospectorFactory.ModuleBuilder}
+         */
+        this.animationWithMocksFor = function(animationName, toBeMockedDependencies) {
+            toBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
+            includeProviderComponent('$animateProvider', animationName, 'withMocks', 'for', toBeMockedDependencies);
+            return this;
+        };
 
-            /**
-             * Includes a animation that uses mocked service dependencies (instead of actual services) in the module.
-             *
-             * @param {string} animationName name of the controller to be included in the to be build module
-             * @param {...string} toBeMockedDependencies dependencies to be replaced with a mock implementation
-             * @returns {moduleIntrospectorFactory.ModuleBuilder}
-             */
-            this.animationWithMocksFor = function(animationName, toBeMockedDependencies) {
-                toBeMockedDependencies = Array.prototype.slice.call(arguments, 1);
-                includeComponent('animation', animationName, 'withMocks', 'for', toBeMockedDependencies);
-                return this;
-            };
+        //TODO: comment
+        this.animationWithMocksExcept = function(animationName, toBeMockedDependencies) {
+            includeProviderComponent('$animateProvider', animationName, 'withMocks', 'except', toBeMockedDependencies);
+            return this;
+        };
 
-            //TODO: comment
-            this.animationWithMocksExcept = function(animationName, toBeMockedDependencies) {
-                includeComponent('animation', animationName, 'withMocks', 'except', toBeMockedDependencies);
-                return this;
-            };
-
-            /**
-             * Including an actual animation (and not a mocked one) in the module
-             *
-             * @param {string} animationName name of the animation to be included in the to be build module
-             * @returns {moduleIntrospectorFactory.ModuleBuilder}
-             */
-            this.animationAsIs = function(animationName) {
-                includeComponent('animation', animationName, 'asIs');
-                return this;
-            };
-
-        }
+        /**
+         * Including an actual animation (and not a mocked one) in the module
+         *
+         * @param {string} animationName name of the animation to be included in the to be build module
+         * @returns {moduleIntrospectorFactory.ModuleBuilder}
+         */
+        this.animationAsIs = function(animationName) {
+            includeProviderComponent('$animateProvider', animationName, 'asIs');
+            return this;
+        };
 
 
         /**
@@ -395,126 +466,79 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
          */
         this.build = function() {
 
-            function getModuleComponentDependencies(type, name) {
-                var result;
-
-                if (type === 'service') {
-                    result = introspector.getServiceDependencies(injector, name);
-                } else if (type === 'controller') {
-                    result = introspector.getControllerDependencies(injector, name);
-                } else if (type === 'filter') {
-                    result = introspector.getFilterDependencies(injector, name);
-                } else if (type === 'directive') {
-                    result = introspector.getDirectiveDependencies(injector, name);
-                } else if (type === 'animation') {
-                    result = introspector.getAnimationDependencies(injector, name);
-                } else {
-                    throw 'Unsupported module component type: ' + type;
-                }
-
-                return result;
-            }
-
-            function getDeclaredModuleComponent(type, name) {
-                var result;
-
-                if (type === 'service') {
-                    result = introspector.getServiceDeclaration(name);
-                } else if (type === 'controller') {
-                    result = introspector.getControllerDeclaration(name);
-                } else if (type === 'filter') {
-                    result = introspector.getFilterDeclaration(name);
-                } else if (type === 'directive') {
-                    result = introspector.getDirectiveDeclaration(name);
-                } else if (type === 'animation') {
-                    result = introspector.getAnimationDeclaration(name);
-                } else {
-                    throw 'Unsupported module component type: ' + type;
-                }
-
-                return result;
-            }
-
             function handleAsIsComponentKind(toBeIncludedModuleComponent) {
-                var type = toBeIncludedModuleComponent.type;
-                var name = toBeIncludedModuleComponent.componentName;
+                var providerName = toBeIncludedModuleComponent.providerName;
+                var componentName = toBeIncludedModuleComponent.componentName;
 
-                if (type === 'controller' || type === 'filter' || type === 'directive' || type === 'animation') {
-                    var dependencies = getModuleComponentDependencies(type, name);
+                if (providerName === '$controllerProvider' || providerName === '$filterProvider' ||
+                        providerName === '$compileProvider' || providerName === '$animateProvider') {
+                    var providerComponentDeclaration =
+                        introspector.getProviderComponentDeclaration(providerName, componentName);
 
-                    angular.forEach(dependencies, function(dependencyInfo, dependencyName) {
-                        asIsServices[dependencyName] = dependencyInfo.instance;
+                    angular.forEach(providerComponentDeclaration.injectedServices, function(injectedService) {
+                        if (injector.has(injectedService)) {
+                            asIsServices[injectedService] = injector.get(injectedService);
+                        }
                     });
 
-                    var declaredModuleComponent = getDeclaredModuleComponent(type, name);
-
-                    declarations[name] = {
-                        providerName: declaredModuleComponent.providerName,
-                        providerMethod: declaredModuleComponent.providerMethod,
-                        declaration: declaredModuleComponent.declaration
+                    declarations[componentName] = {
+                        providerName: providerName,
+                        providerMethod: providerComponentDeclaration.providerMethod,
+                        declaration: providerComponentDeclaration.rawDeclaration
                     };
-                } else if (type === 'service') {
-                    asIsServices[name] = injector.get(name);
+                } else if (providerName === '$provide') {
+                    asIsServices[componentName] = injector.get(componentName);
                 } else {
-                    throw 'Unsupported module component type: ' + type;
+                    throw 'Unsupported provider: ' + providerName;
                 }
             }
 
             function handleWithMocksComponentKind(toBeIncludedModuleComponent) {
-                var type = toBeIncludedModuleComponent.type;
-                var name = toBeIncludedModuleComponent.componentName;
+                var providerName = toBeIncludedModuleComponent.providerName;
+                var componentName = toBeIncludedModuleComponent.componentName;
 
-                var dependencyInfoPerName = getModuleComponentDependencies(type, name);
-                var declaredModuleComponent = getDeclaredModuleComponent(type, name);
+                var providerComponentDeclaration =
+                    introspector.getProviderComponentDeclaration(providerName, componentName);
 
-                var originalDeclaration = declaredModuleComponent.declaration;
-                var dependencies = injector.annotate(originalDeclaration);
-
+                /** @type {(Array.<(string|Function)>|{$get: Array.<(string|Function)})} */
                 var annotatedDeclaration = [];
 
-                angular.forEach(dependencies, function (dependencyName) {
-                    var dependencyInfo = dependencyInfoPerName[dependencyName];
+                angular.forEach(providerComponentDeclaration.injectedServices, function (injectedService) {
 
-                    if (!dependencyInfo) {
-                        annotatedDeclaration.push(dependencyName);
+                    if (!injector.has(injectedService)) {
+                        annotatedDeclaration.push(injectedService);
                     } else {
-                        var shouldBeMocked = dependencyShouldBeMocked(toBeIncludedModuleComponent, dependencyName);
-                        var canBeMocked = mockCreator.canBeMocked(dependencyInfo.instance);
+                        var shouldBeMocked = dependencyShouldBeMocked(toBeIncludedModuleComponent, injectedService);
+
+                        var injectedServiceInstance = injector.get(injectedService);
+                        var canBeMocked = mockCreator.canInstanceBeMocked(injectedServiceInstance);
 
                         if (shouldBeMocked && !canBeMocked &&
                                 toBeIncludedModuleComponent.dependenciesUsage === 'for') {
-                            throw 'Could not mock the dependency explicitly asked to mock: ' + dependencyName;
+                            throw 'Could not mock the dependency explicitly asked to mock: ' + injectedService;
                         }
 
                         var toBeMocked = shouldBeMocked && canBeMocked;
 
                         if (toBeMocked) {
-                            mockedServices[dependencyName] = dependencyInfo.instance;
+                            mockedServices[injectedService] = injectedServiceInstance;
                         } else {
-                            asIsServices[dependencyName] = dependencyInfo.instance;
+                            asIsServices[injectedService] = injectedServiceInstance;
                         }
 
-                        annotatedDeclaration.push(dependencyName + (toBeMocked ? 'Mock' : ''));
+                        annotatedDeclaration.push(injectedService + (toBeMocked ? 'Mock' : ''));
                     }
                 });
 
-                var originalNonAnnotatedServiceDeclaration;
-                if (angular.isArray(originalDeclaration)) {
-                    originalNonAnnotatedServiceDeclaration = originalDeclaration[originalDeclaration.length - 1];
-                } else {
-                    originalNonAnnotatedServiceDeclaration = originalDeclaration;
-                }
+                annotatedDeclaration.push(providerComponentDeclaration.strippedDeclaration);
 
-                annotatedDeclaration.push(originalNonAnnotatedServiceDeclaration);
-
-                if (declaredModuleComponent.providerName === '$provide' &&
-                        declaredModuleComponent.providerMethod === 'provider') {
+                if (providerName === '$provide' && providerComponentDeclaration.providerMethod === 'provider') {
                     annotatedDeclaration = {$get: annotatedDeclaration};
                 }
 
-                declarations[name] = {
-                    providerName: declaredModuleComponent.providerName,
-                    providerMethod: declaredModuleComponent.providerMethod,
+                declarations[componentName] = {
+                    providerName: providerName,
+                    providerMethod: providerComponentDeclaration.providerMethod,
                     declaration: annotatedDeclaration
                 };
             }
@@ -534,31 +558,18 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             }
 
             function configureProviders(callback) {
-                if (angular1_0) {
-                    return function ($provide, $filterProvider, $controllerProvider, $compileProvider) {
-                        var providers = {
-                            $provide: $provide,
-                            $filterProvider: $filterProvider,
-                            $controllerProvider: $controllerProvider,
-                            $compileProvider: $compileProvider
-                        };
-
-                        callback(providers);
+                return function ($provide, $filterProvider, $controllerProvider, $compileProvider,
+                        $animateProvider) {
+                    var providers = {
+                        $provide: $provide,
+                        $filterProvider: $filterProvider,
+                        $controllerProvider: $controllerProvider,
+                        $compileProvider: $compileProvider,
+                        $animateProvider: $animateProvider
                     };
-                } else {
-                    return function ($provide, $filterProvider, $controllerProvider, $compileProvider,
-                            $animateProvider) {
-                        var providers = {
-                            $provide: $provide,
-                            $filterProvider: $filterProvider,
-                            $controllerProvider: $controllerProvider,
-                            $compileProvider: $compileProvider,
-                            $animateProvider: $animateProvider
-                        };
 
-                        callback(providers);
-                    };
-                }
+                    callback(providers);
+                };
             }
 
 
@@ -589,7 +600,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 
             return angular.mock.module(configureProviders(function(providers) {
                 angular.forEach(mockedServices, function(originalService, serviceName) {
-                    var mockedService = mockCreator.createMock(originalService);
+                    var mockedService = mockCreator.mockInstance(originalService);
                     providers.$provide.value(serviceName + 'Mock', mockedService);
                 });
 
@@ -625,15 +636,10 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 moduleIntrospectorFactory.$inject = ["moduleIntrospector", "mockCreator"];
 
 
-angular.module('ngImprovedTesting')
+angular.module('ngImprovedTesting.internal.moduleBuilder', [
+        'ngModuleIntrospector',
+        'ngImprovedTesting.internal.mockCreator'
+     ])
     .factory('moduleBuilder', moduleIntrospectorFactory);
 
 }());
-
-(function(window) {
-'use strict';
-
-var injector = angular.injector(['ng', 'ngImprovedTesting']);
-
-window.ModuleBuilder = injector.get('moduleBuilder');
-}(window));
