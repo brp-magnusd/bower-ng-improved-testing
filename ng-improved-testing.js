@@ -7,61 +7,6 @@
 
 angular.module('ngImprovedTesting', ['ngModuleIntrospector.$q']);
 
-var ngModuleIntrospectorInjector = angular.injector(['ng', 'ngModuleIntrospector']);
-var moduleIntrospectorFactory = ngModuleIntrospectorInjector.get('moduleIntrospector');
-var moduleIntrospector = moduleIntrospectorFactory('ng');
-
-var original$QProviderConstructor = moduleIntrospector.getProviderDeclaration('$qProvider').rawDeclaration;
-var ngInjector = angular.injector(['ng']);
-var original$QProviderInstance = ngInjector.instantiate(original$QProviderConstructor, {});
-
-
-angular.module('ngImprovedTesting.$q', ['ngImprovedTesting.internal.config'])
-
-    /**
-     * @ngdoc service
-     * @name $q
-     * @module ngImprovedTesting
-     * @description
-     * TODO: add description
-     */
-    .provider('$q', ["ngImprovedTestingConfig", function(ngImprovedTestingConfig) {
-        this.$get = ["$rootScope", "$exceptionHandler", function($rootScope, $exceptionHandler) {
-            /** @type {?Array.<function()>} */
-            var executeOnNextTick = null;
-
-            if (ngImprovedTestingConfig.$qTick) {
-                executeOnNextTick = [];
-
-                $rootScope = {
-                    $evalAsync: function (callback) {
-                        executeOnNextTick.push(callback);
-                    }
-                };
-            }
-
-            var result = original$QProviderInstance.$get[original$QProviderInstance.$get.length - 1](
-                    $rootScope, $exceptionHandler);
-
-            if (ngImprovedTestingConfig.$qTick) {
-                /**
-                 * @ngdoc method
-                 * @name $q#tick
-                 * @description
-                 * TODO: add description
-                 */
-                result.tick = function () {
-                    angular.forEach(executeOnNextTick, function (callback) {
-                        callback();
-                    });
-                    executeOnNextTick.length = 0;
-                };
-            }
-
-            return result;
-        }];
-    }]);
-
 var ngImprovedTestingConfigDefaults = {
     $qTick: false
 };
@@ -75,20 +20,6 @@ angular.module('ngImprovedTesting.internal.config', [])
     .run(function() {
         angular.extend(ngImprovedTestingConfig, ngImprovedTestingConfigDefaults);
     });
-
-var injector = angular.injector([
-        'ng',
-        'ngImprovedTesting.internal.config',
-        'ngImprovedTesting.internal.mockCreator',
-        'ngImprovedTesting.internal.moduleBuilder'
-    ]);
-
-window.ngImprovedTestingConfig = injector.get('ngImprovedTestingConfig');
-
-var mockCreator = injector.get('mockCreator');
-window.mockInstance = mockCreator.mockInstance;
-
-window.ModuleBuilder = injector.get('moduleBuilder');
 
 /**
  * @ngdoc service
@@ -641,5 +572,74 @@ angular.module('ngImprovedTesting.internal.moduleBuilder', [
         'ngImprovedTesting.internal.mockCreator'
      ])
     .factory('moduleBuilder', moduleIntrospectorFactory);
+
+var ngModuleIntrospectorInjector = angular.injector(['ng', 'ngModuleIntrospector']);
+var moduleIntrospectorFactory = ngModuleIntrospectorInjector.get('moduleIntrospector');
+var moduleIntrospector = moduleIntrospectorFactory('ng');
+
+var original$QProviderConstructor = moduleIntrospector.getProviderDeclaration('$qProvider').rawDeclaration;
+var ngInjector = angular.injector(['ng']);
+var original$QProviderInstance = ngInjector.instantiate(original$QProviderConstructor, {});
+
+
+angular.module('ngImprovedTesting.$q', ['ngImprovedTesting.internal.config'])
+
+    /**
+     * @ngdoc service
+     * @name $q
+     * @module ngImprovedTesting
+     * @description
+     * TODO: add description
+     */
+    .provider('$q', ["ngImprovedTestingConfig", function(ngImprovedTestingConfig) {
+        this.$get = ["$rootScope", "$exceptionHandler", function($rootScope, $exceptionHandler) {
+            /** @type {?Array.<function()>} */
+            var executeOnNextTick = null;
+
+            if (ngImprovedTestingConfig.$qTick) {
+                executeOnNextTick = [];
+
+                $rootScope = {
+                    $evalAsync: function (callback) {
+                        executeOnNextTick.push(callback);
+                    }
+                };
+            }
+
+            var result = original$QProviderInstance.$get[original$QProviderInstance.$get.length - 1](
+                    $rootScope, $exceptionHandler);
+
+            if (ngImprovedTestingConfig.$qTick) {
+                /**
+                 * @ngdoc method
+                 * @name $q#tick
+                 * @description
+                 * TODO: add description
+                 */
+                result.tick = function () {
+                    angular.forEach(executeOnNextTick, function (callback) {
+                        callback();
+                    });
+                    executeOnNextTick.length = 0;
+                };
+            }
+
+            return result;
+        }];
+    }]);
+
+var injector = angular.injector([
+        'ng',
+        'ngImprovedTesting.internal.config',
+        'ngImprovedTesting.internal.mockCreator',
+        'ngImprovedTesting.internal.moduleBuilder'
+    ]);
+
+window.ngImprovedTestingConfig = injector.get('ngImprovedTestingConfig');
+
+var mockCreator = injector.get('mockCreator');
+window.mockInstance = mockCreator.mockInstance;
+
+window.ModuleBuilder = injector.get('moduleBuilder');
 
 }());
