@@ -5,21 +5,28 @@
  */
 (function() { 'use strict';
 
-angular.module('ngImprovedTesting', ['ngModuleIntrospector.$q']);
+angular.module('ngImprovedTesting', ['ngImprovedTesting.$q']);
 
-var ngImprovedTestingConfigDefaults = {
+/* global afterEach:true */
+var ngImprovedTestingConfigFlags = {
     $qTick: false
 };
 
-var ngImprovedTestingConfig = angular.extend({}, ngImprovedTestingConfigDefaults);
+var ngImprovedTestingConfig = {
+    $qTickEnable: function() {
+        afterEach(function() {
+            ngImprovedTestingConfigFlags.$qTick = false;
+        });
 
+        return function() {
+            ngImprovedTestingConfigFlags.$qTick = true;
+        };
+    }
+};
 
 angular.module('ngImprovedTesting.internal.config', [])
-    .constant('ngImprovedTestingConfig', ngImprovedTestingConfig)
-
-    .run(function() {
-        angular.extend(ngImprovedTestingConfig, ngImprovedTestingConfigDefaults);
-    });
+    .constant('ngImprovedTestingConfigFlags', ngImprovedTestingConfigFlags)
+    .constant('ngImprovedTestingConfig', ngImprovedTestingConfig);
 
 /**
  * @ngdoc service
@@ -517,7 +524,10 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
              */
             var declarations = {};
 
-            var buildModule = angular.module(buildModuleName, originalModule.requires);
+            var moduleRequires = originalModule.requires.slice(0);
+            moduleRequires.push('ngImprovedTesting');
+
+            var buildModule = angular.module(buildModuleName, moduleRequires);
 
             angular.forEach(toBeIncludedModuleComponents, function(toBeIncludedModuleComponent) {
                 if (toBeIncludedModuleComponent.componentKind === 'asIs') {
@@ -591,12 +601,12 @@ angular.module('ngImprovedTesting.$q', ['ngImprovedTesting.internal.config'])
      * @description
      * TODO: add description
      */
-    .provider('$q', ["ngImprovedTestingConfig", function(ngImprovedTestingConfig) {
+    .provider('$q', ["ngImprovedTestingConfigFlags", function(ngImprovedTestingConfigFlags) {
         this.$get = ["$rootScope", "$exceptionHandler", function($rootScope, $exceptionHandler) {
             /** @type {?Array.<function()>} */
             var executeOnNextTick = null;
 
-            if (ngImprovedTestingConfig.$qTick) {
+            if (ngImprovedTestingConfigFlags.$qTick) {
                 executeOnNextTick = [];
 
                 $rootScope = {
@@ -609,7 +619,7 @@ angular.module('ngImprovedTesting.$q', ['ngImprovedTesting.internal.config'])
             var result = original$QProviderInstance.$get[original$QProviderInstance.$get.length - 1](
                     $rootScope, $exceptionHandler);
 
-            if (ngImprovedTestingConfig.$qTick) {
+            if (ngImprovedTestingConfigFlags.$qTick) {
                 /**
                  * @ngdoc method
                  * @name $q#tick
@@ -635,10 +645,15 @@ var injector = angular.injector([
         'ngImprovedTesting.internal.moduleBuilder'
     ]);
 
-window.ngImprovedTestingConfig = injector.get('ngImprovedTestingConfig');
 
 var mockCreator = injector.get('mockCreator');
-window.mockInstance = mockCreator.mockInstance;
+
+window.ngImprovedTesting = {
+    mockInstance: mockCreator.mockInstance,
+    config: injector.get('ngImprovedTestingConfig')
+};
+
+window.mockInstance = window.ngImprovedTesting.mockInstance;
 
 window.ModuleBuilder = injector.get('moduleBuilder');
 
