@@ -147,10 +147,8 @@ function MockCreator() {
 angular.module('ngImprovedTesting.internal.mockCreator', [])
     .service('mockCreator', MockCreator);
 
-var numberOfBuildModules = 0;
-
 // @ngInject
-function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
+function moduleIntrospectorFactory(moduleIntrospector, mockCreator, $log) {
 
     /**
      * @constructor
@@ -177,8 +175,35 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             }
 
             toBeIncludedModuleComponents.push(toBeIncludedModuleComponent);
+
+            if (providerName === '$animateProvider') {
+                $animateProviderUsed = true;
+            }
         }
 
+        function asIsMethodNameForProviderName(providerName) {
+            if (providerName === '$provide') {
+                return 'serviceAsIs';
+            } else if (providerName === '$filterProvider') {
+                return 'filterAsIs';
+            } else if (providerName === '$controllerProvider') {
+                return 'controllerAsIs';
+            } else if (providerName === '$compileProvider') {
+                return 'directiveAsIs';
+            } else if (providerName === '$animateProvider') {
+                return 'animationAsIs';
+            } else {
+                throw 'Unsupported provider: ' + providerName;
+            }
+        }
+
+
+        var $animateProviderUsed = false;
+
+        /** @type {?Function} */
+        var moduleConfigFn = null;
+
+        var includeAll = false;
 
         /**
          * @name ModuleBuilder.ToBeIncludedModuleComponent
@@ -192,6 +217,20 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 
         /** @type {Object.<ModuleBuilder.ToBeIncludedModuleComponent>} */
         var toBeIncludedModuleComponents = [];
+
+        /**
+         * @param {Function} callback
+         */
+        this.config = function(callback) {
+            moduleConfigFn = callback;
+            return this;
+        };
+
+        //TODO: finalize the name of this method
+        this.includeAll = function() {
+            includeAll = true;
+            return this;
+        };
 
         //TODO: comment
         this.serviceWithMocks = function(serviceName) {
@@ -271,6 +310,19 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             return this;
         };
 
+        //TODO: puts entry to the mockedFilters hash causing the $filter to return the mocked filter
+        //  (instead of the original one).
+        //TODO: decide if we only want $filter to work for explicitly registered components, which could in this case
+        //  also be `...AsIs` components, (which could possible retrieve $filter using $injector.get('$filter')
+        //TODO: decide if we want to expose filters with '...FilterMock' (possibly) together with '...Mock'
+        //TODO: should we support mocking filters using '...WithMocks', '...WithMocksFor' and ''...WithMocksExcept' in
+        //  case the filter is used as an injected service through the '...Filter' name.
+        //TODO: should be using using '...WithMocks', '...WithMocksFor' and ''...WithMocksExcept' together with
+        //  'filterMock' the mock always be mocked? (i.e. also when nog included in '...WithMocks')
+//        this.filterMock = function(filterName) {
+//            // include a filter that can be found using "...FilterMock" (or not ?!?) and also through $filter('...')
+//        };
+
         //TODO: comment
         this.controllerWithMocks = function(controllerName) {
             includeProviderComponent('$controllerProvider', controllerName, 'withMocks');
@@ -307,6 +359,18 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             return this;
         };
 
+        //TODO: puts entry to the mockedControllers hash causing the $controller to use the mocked controller
+        //  (instead of the original one).
+        //TODO: decide if we only want $controller to work for explicitly registered components, which could in this
+        //  case also be `...AsIs` components, (which could possible retrieve $controller using
+        //  $injector.get('$controller')
+        //      - same should also apply when using `inject(...)` in your tests
+//        this.controllerMock = function(controllerName, controllerMockConfigurator) {
+//            // include a mocked controller; should support both "controller as" as traditional $scope-style
+//            //  TODO: how should I mock a $scope-style controller
+//            //  TODO: make sure that controllerMockConfigurator is optional
+//        };
+
         //TODO: comment
         this.directiveWithMocks = function(directiveName) {
             includeProviderComponent('$compileProvider', directiveName, 'withMocks');
@@ -342,6 +406,18 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             includeProviderComponent('$compileProvider', directiveName, 'asIs');
             return this;
         };
+
+        //TODO: puts entry to the mockedDirectives hash causing the $compile to use the mocked directive
+        //  (instead of the original one).
+        //TODO: decide if we only want $compile to work for explicitly registered components, which could in this
+        //  case also be `...AsIs` components, (which could possible retrieve $compile using $injector.get('$compile')
+        //      - same should also apply when using `inject(...)` in your tests
+//        this.directiveMock = function(directiveName, directiveMockConfigurator) {
+//            // include a directive with a mocked controller but without any "link" or "compile" method;
+//            // should only work if there is exactly "one" directive with the provided directiveName that has a
+//            // (directive) controller
+//            //  TODO: make sure that directiveMockConfigurator is optional
+//        };
 
         //TODO: comment
         this.animationWithMocks = function(animationName) {
@@ -406,15 +482,16 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
             }
 
 
-            var buildModuleName = 'generatedByNgImprovedTesting#' + numberOfBuildModules;
-
-            numberOfBuildModules += 1;
-
-
             var populateModuleComponents = configureProviders(function(providers) {
                 function handleAsIsComponentKind(toBeIncludedModuleComponent) {
                     var providerName = toBeIncludedModuleComponent.providerName;
                     var componentName = toBeIncludedModuleComponent.componentName;
+
+                    if (includeAll) {
+                        $log.warn('Ignoring `' + asIsMethodNameForProviderName(providerName) + '(' + componentName +
+                                ')` since `includeAll()` is also used.');
+                        return;
+                    }
 
                     if (providerName === '$controllerProvider' || providerName === '$filterProvider' ||
                         providerName === '$compileProvider' || providerName === '$animateProvider') {
@@ -478,7 +555,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
 
                             if (toBeMocked) {
                                 mockedServices[injectedService] = injectedServiceInstance;
-                            } else {
+                            } else if (!includeAll) {
                                 asIsServices[injectedService] = injectedServiceInstance;
                             }
 
@@ -513,6 +590,10 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                     }
                 }
 
+                function ensureModuleExist(moduleName) {
+                    angular.module(moduleName);
+                }
+
 
                 /** @type Object.<Object> */
                 var mockedServices = {};
@@ -526,19 +607,22 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                 var declarations = {};
 
 
-                /** @type {angular.Module} */
-                var originalModule = angular.module(moduleName);
+                // ensure that the module exists. Throws an [$injector:nomod] whenever it not exists
+                ensureModuleExist(moduleName);
 
                 var injector = /** @type {$injector} */ angular.injector(['ng', 'ngMock', moduleName]);
 
+                if ($animateProviderUsed) {
+                    var $animate = injector.get('$animate');
+
+                    if ($animate.enabled === angular.noop) {
+                        throw 'Animations were included in the to be build module, but the orginal module didn\'t ' +
+                                'the "ngAnimate" module: ' + moduleName;
+                    }
+                }
+
+
                 var introspector = moduleIntrospector(moduleName);
-
-
-                var moduleRequires = originalModule.requires.slice(0);
-                moduleRequires.push('ngImprovedTesting');
-
-                //TODO: remove after we did fix #8
-                angular.module(buildModuleName, moduleRequires);
 
 
                 angular.forEach(toBeIncludedModuleComponents, function(toBeIncludedModuleComponent) {
@@ -556,6 +640,8 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                 });
 
                 angular.forEach(asIsServices, function (originalService, serviceName) {
+                    //TODO: skip built-in services?!? Or not?!?
+                    //TODO: should we also skip the services ($animate) from ngAnimate?!?
                     providers.$provide.value(serviceName, originalService);
                 });
 
@@ -565,7 +651,17 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
                 });
             });
 
-            return angular.mock.module(populateModuleComponents, buildModuleName);
+            var mockMockArgs = [];
+            if ($animateProviderUsed && !includeAll) {
+                mockMockArgs.push('ngAnimate');
+            }
+            if (includeAll) {
+                mockMockArgs.push(moduleName);
+            }
+            mockMockArgs.push(populateModuleComponents);
+            mockMockArgs.push('ngImprovedTesting');
+
+            return angular.mock.module.apply(undefined, mockMockArgs);
         };
 
     }
@@ -586,7 +682,7 @@ function moduleIntrospectorFactory(moduleIntrospector, mockCreator) {
     };
 
 }
-moduleIntrospectorFactory.$inject = ["moduleIntrospector", "mockCreator"];
+moduleIntrospectorFactory.$inject = ["moduleIntrospector", "mockCreator", "$log"];
 
 
 angular.module('ngImprovedTesting.internal.moduleBuilder', [
